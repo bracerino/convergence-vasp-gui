@@ -2,6 +2,8 @@
 GUI for automatic creation of POTCAR for POSCAR and calculations energy cut-off (Ecut) and k-space sampling convergence in VASP.
 Video tutorial will be available at June. GUI is based on collection of my previous VASP scripts: https://github.com/bracerino/VASP_scripts.
 
+![GUI for VASP convergence tests and automatic creation of POTCAR](vasp_convergence_gui/1.png)
+
 ## How to compile:
 - git clone https://github.com/bracerino/convergence-tests-vasp-gui.git 
 - cd convergence-tests-vasp-gui/  
