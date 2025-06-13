@@ -297,7 +297,7 @@ with tab1:
             st.session_state.structure = Structure.from_file(auto_poscar_path)
             if "last_loaded" not in st.session_state or st.session_state.last_loaded != auto_poscar_path:
                 st.success(f"Loaded `POSCAR` from `{st.session_state.work_dir}`.")
-                st.session_state.generated_files = {}
+                #st.session_state.generated_files = {}
                 st.session_state.last_loaded = auto_poscar_path
                 #st.rerun()
         except Exception as e:
