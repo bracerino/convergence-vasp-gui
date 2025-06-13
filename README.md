@@ -6,7 +6,7 @@ Video tutorial will be available at June. GUI is based on collection of my previ
 
 ## How to compile:
 - git clone https://github.com/bracerino/convergence-vasp-gui.git
-- cd convergence-tests-vasp-gui/  
+- cd convergence-vasp-gui/  
 - python3 -m venv ven0_env  
 - source ven0_env/bin/activate  
 - pip install -r requirements.txt  
