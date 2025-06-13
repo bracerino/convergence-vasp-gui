@@ -5,7 +5,7 @@ Video tutorial will be available at June. GUI is based on collection of my previ
 ![GUI for VASP convergence tests and automatic creation of POTCAR](vasp_convergence_gui/1.png)
 
 ## How to compile:
-- git clone https://github.com/bracerino/convergence-tests-vasp-gui.git 
+- git clone https://github.com/bracerino/convergence-vasp-gui.git
 - cd convergence-tests-vasp-gui/  
 - python3 -m venv ven0_env  
 - source ven0_env/bin/activate  
