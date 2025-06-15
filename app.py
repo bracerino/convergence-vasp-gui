@@ -278,7 +278,7 @@ with st.sidebar:
         with open(VASP_COMMAND_FILE, 'w') as f:
             f.write(st.session_state.vasp_command)
         st.sidebar.success("Command saved.")
-
+    st.sidebar.info(f"❤️🫶 **[Donations always appreciated!](https://buymeacoffee.com/bracerino)**")
     st.header("3. Upload Structure (Optional)")
     st.info("If a `POSCAR` file isn't found in your project folder, upload one here.")
     uploaded_poscar_sidebar = st.file_uploader("Upload", type=['POSCAR', 'vasp', 'contcar'],
