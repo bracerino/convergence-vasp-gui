@@ -18,10 +18,8 @@ import streamlit.components.v1 as components
 from pymatgen.core import Structure
 from pymatgen.io.cif import CifWriter
 
-
 POTCAR_PATH_FILE = "potcar_path.txt"
 VASP_COMMAND_FILE = "vasp_command.txt"
-
 
 
 def create_potcar(structure, vasp_potentials_folder):
@@ -113,6 +111,11 @@ def get_kpoints_from_kspacing(structure, k_spacing):
     return max(1, ka), max(1, kb), max(1, kc)
 
 
+import select
+import fcntl
+import os
+import signal
+import psutil
 
 
 def run_vasp_in_thread(calc_params, work_dir, log_queue, stop_event):
@@ -126,6 +129,45 @@ def run_vasp_in_thread(calc_params, work_dir, log_queue, stop_event):
     header = ("# ENCUT[eV] Total_Energy[eV] Time/step(min)\n" if mode == 'encut'
               else "# k_spacing[A^-1] k_a k_b k_c Total_Energy[eV] Time/step(min)\n")
 
+    current_process = None
+
+    def set_non_blocking(fd):
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+    def terminate_process(process):
+        if process and process.poll() is None:
+            log_queue.put("--- Terminating VASP process and all children ---")
+            try:
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                    log_queue.put("--- Sent SIGTERM to process group ---")
+                except (OSError, ProcessLookupError):
+                    process.terminate()
+                    log_queue.put("--- Sent SIGTERM to main process ---")
+                try:
+                    process.wait(timeout=1)
+                    log_queue.put("--- Process terminated gracefully ---")
+                except subprocess.TimeoutExpired:
+                    log_queue.put("--- Force killing process group ---")
+                    try:
+                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    except (OSError, ProcessLookupError):
+                        process.kill()
+                    process.wait()
+                    log_queue.put("--- Process killed ---")
+            except Exception as e:
+                log_queue.put(f"Error terminating process: {e}")
+                try:
+                    parent = psutil.Process(process.pid)
+                    children = parent.children(recursive=True)
+                    for child in children:
+                        child.kill()
+                    parent.kill()
+                    log_queue.put("--- Used psutil to kill process tree ---")
+                except:
+                    pass
+
     try:
         with open(output_file_path, 'w') as f:
             f.write(header)
@@ -133,7 +175,7 @@ def run_vasp_in_thread(calc_params, work_dir, log_queue, stop_event):
         if mode == 'encut':
             loop_values = range(calc_params['max'], calc_params['min'] + (-1 if calc_params['step'] < 0 else 1),
                                 calc_params['step'])
-        else: 
+        else:
             loop_values = np.arange(calc_params['start'], calc_params['end'] + calc_params['step'], calc_params['step'])
 
         previous_k_grid = None
@@ -150,7 +192,7 @@ def run_vasp_in_thread(calc_params, work_dir, log_queue, stop_event):
                 incar_content = re.sub(r"ENCUT\s*=\s*\d+", f"ENCUT = {encut}", incar_template)
                 with open(os.path.join(work_dir, "INCAR"), "w") as f:
                     f.write(incar_content)
-            else:  
+            else:
                 k_spacing = val
                 ka, kb, kc = get_kpoints_from_kspacing(calc_params['structure'], k_spacing)
                 current_k_grid = (ka, kb, kc)
@@ -167,18 +209,56 @@ def run_vasp_in_thread(calc_params, work_dir, log_queue, stop_event):
                 with open(os.path.join(work_dir, "KPOINTS"), "w") as f:
                     f.write(kpoints_content)
                 with open(os.path.join(work_dir, "INCAR"), "w") as f:
-                    f.write(incar_template)  
+                    f.write(incar_template)
 
             if os.path.exists(os.path.join(work_dir, "WAVECAR")):
                 os.remove(os.path.join(work_dir, "WAVECAR"))
 
             start_time = time.time()
-            process = subprocess.Popen(command, shell=True, cwd=work_dir,
-                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-            for line in iter(process.stdout.readline, ''):
-                log_queue.put(line.strip())
-            process.stdout.close()
-            return_code = process.wait()
+
+            current_process = subprocess.Popen(command, shell=True, cwd=work_dir,
+                                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                               text=True, bufsize=1, preexec_fn=os.setsid)
+            set_non_blocking(current_process.stdout.fileno())
+
+            output_buffer = ""
+
+            while current_process.poll() is None:
+                if stop_event.is_set():
+                    terminate_process(current_process)
+                    log_queue.put("--- Calculation stopped by user during VASP execution ---")
+                    return
+
+                try:
+                    ready, _, _ = select.select([current_process.stdout], [], [], 0.1)  # 0.1 second timeout
+
+                    if ready:
+                        try:
+                            chunk = current_process.stdout.read(1024)  # Read in chunks
+                            if chunk:
+                                output_buffer += chunk
+                                # Process complete lines
+                                while '\n' in output_buffer:
+                                    line, output_buffer = output_buffer.split('\n', 1)
+                                    if line.strip():
+                                        log_queue.put(line.strip())
+                        except (BlockingIOError, OSError):
+                            pass
+
+                except (select.error, ValueError):
+                    break
+                time.sleep(0.05)  # Very short sleep - 50ms
+            if output_buffer.strip():
+                for line in output_buffer.strip().split('\n'):
+                    if line.strip():
+                        log_queue.put(line.strip())
+            if stop_event.is_set():
+                log_queue.put("--- Calculation stopped by user ---")
+                return
+
+            return_code = current_process.returncode
+            current_process = None
+
             end_time = time.time()
             elapsed_time_min = (end_time - start_time) / 60.0
 
@@ -187,10 +267,12 @@ def run_vasp_in_thread(calc_params, work_dir, log_queue, stop_event):
                 break
 
             total_energy = None
-            with open(os.path.join(work_dir, "OUTCAR"), 'r') as outcar:
-                for line in outcar:
-                    if "free  energy   TOTEN" in line:
-                        total_energy = float(line.split()[-2])
+            outcar_path = os.path.join(work_dir, "OUTCAR")
+            if os.path.exists(outcar_path):
+                with open(outcar_path, 'r') as outcar:
+                    for line in outcar:
+                        if "free  energy   TOTEN" in line:
+                            total_energy = float(line.split()[-2])
 
             if total_energy:
                 log_queue.put(f"SUCCESS: Energy = {total_energy:.5f} eV, Time = {elapsed_time_min:.2f} min")
@@ -211,16 +293,19 @@ def run_vasp_in_thread(calc_params, work_dir, log_queue, stop_event):
 
         if not stop_event.is_set():
             log_queue.put("--- All calculations finished ---")
+
     except Exception as e:
         log_queue.put(f"An error occurred in the calculation thread: {e}")
+        if current_process:
+            terminate_process(current_process)
     finally:
+        if current_process:
+            terminate_process(current_process)
         log_queue.put("THREAD_FINISHED")
-
 
 
 st.set_page_config(page_title="VASP Convergence Workflow", layout="wide")
 st.title("VASP Convergence Workflow")
-
 
 default_potcar_path = ""
 if os.path.exists(POTCAR_PATH_FILE):
@@ -261,7 +346,6 @@ if 'total_steps' not in st.session_state:
 if 'incar_content' not in st.session_state:
     st.session_state.incar_content = create_incar(520)
 
-
 with st.sidebar:
     st.header("1. VASP Potentials Path")
     st.session_state.vasp_potentials_path = st.text_input("Path", st.session_state.vasp_potentials_path,
@@ -284,22 +368,32 @@ with st.sidebar:
     uploaded_poscar_sidebar = st.file_uploader("Upload", type=['POSCAR', 'vasp', 'contcar'],
                                                label_visibility="collapsed")
 
-
 tab1, tab2, tab3 = st.tabs(["➡️ Run Workflow", "🖥️ Live Console", "📊 Live Results"])
 
 with tab1:
     st.header("1. Define Working Directory")
     st.session_state.work_dir = st.text_input("Project Folder Path", value=st.session_state.work_dir)
-
+    if st.session_state.calculation_running:
+        with st.container():
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                with st.spinner("Calculation in progress..."):
+                    st.success("✅ VASP calculations are running")
+                    if st.session_state.progress_text:
+                        st.write(f"📈 {st.session_state.progress_text}")
+                    st.write("👀 **Switch to 'Live Console or Live Results' tab for detailed output**")
+                    if st.button("🛑 Stop Calculation", key="stop_main"):
+                        st.session_state.stop_event.set()
+        st.divider()
     auto_poscar_path = os.path.join(st.session_state.work_dir, "POSCAR")
     if os.path.exists(auto_poscar_path):
         try:
             st.session_state.structure = Structure.from_file(auto_poscar_path)
             if "last_loaded" not in st.session_state or st.session_state.last_loaded != auto_poscar_path:
                 st.success(f"Loaded `POSCAR` from `{st.session_state.work_dir}`.")
-                #st.session_state.generated_files = {}
+                # st.session_state.generated_files = {}
                 st.session_state.last_loaded = auto_poscar_path
-                #st.rerun()
+                # st.rerun()
         except Exception as e:
             st.error(f"Error parsing `POSCAR`: {e}")
             st.session_state.structure = None
@@ -485,7 +579,6 @@ with tab1:
                 # time.sleep(1)
                 st.rerun()
 
-
 rerun_needed = not st.session_state.log_queue.empty()
 while not st.session_state.log_queue.empty():
     message = st.session_state.log_queue.get()
@@ -548,8 +641,8 @@ with tab3:
                 name='ΔE / atom',
                 mode='lines+markers',
                 yaxis='y1',
-                line=dict(width=3),  
-                marker=dict(size=12) 
+                line=dict(width=3),
+                marker=dict(size=12)
             ))
             fig.add_trace(go.Scatter(
                 x=df_plot[x_axis],
@@ -557,8 +650,8 @@ with tab3:
                 name='Time / step',
                 mode='lines+markers',
                 yaxis='y2',
-                line=dict(width=3, dash='dash', color='green'), 
-                marker=dict(size=10, symbol='square', color='green') 
+                line=dict(width=3, dash='dash', color='green'),
+                marker=dict(size=10, symbol='square', color='green')
             ))
 
             fig.update_layout(
@@ -591,7 +684,7 @@ with tab3:
                     orientation="h",
                     font=dict(size=18, color='black')
                 ),
-                font=dict(size=16, color='black')  
+                font=dict(size=16, color='black')
             )
             fig.add_hline(
                 y=0.001,
