@@ -794,6 +794,21 @@ with st.sidebar:
     uploaded_poscar_sidebar = st.file_uploader("Upload", type=['POSCAR', 'vasp', 'contcar'],
                                                label_visibility="collapsed")
 
+css = '''
+<style>
+    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
+        font-size: 1.1rem !important;
+        color: #1e3a8a !important;
+        font-weight: bold !important;
+    }
+
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 25px !important;
+    }
+</style>
+'''
+
+st.markdown(css, unsafe_allow_html=True)
 tab1, tab2, tab3, tab4 = st.tabs(["➡️ Run Workflow", "🖥️ Live Console", "📊 Live Results","📈 OSZICAR Analysis"])
 
 with tab1:
