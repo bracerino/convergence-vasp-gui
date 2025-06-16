@@ -110,7 +110,7 @@ def create_convergence_tab():
     st.header("VASP Optimization Convergence Analysis")
     st.info("Upload your VASP files (INCAR and/or OSZICAR) to analyze energy convergence during optimization. **Only OSZICAR is required.**")
 
-    st.subheader("Upload VASP Files")
+    st.subheader("Upload OSZICAR/INCAR")
     uploaded_files = st.file_uploader(
         "Upload INCAR and/or OSZICAR)",
         accept_multiple_files=True,
