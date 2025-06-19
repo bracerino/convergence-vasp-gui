@@ -11,7 +11,17 @@ Video tutorial here: **[YouTube](https://youtu.be/lCK-NT9ejHQ)**. GUI is based o
 - python3 -m venv ven0_env  
 - source ven0_env/bin/activate  
 - pip install -r requirements.txt  
-- streamlit run app.py 
+- streamlit run app.py
+
+### Tested Python packages  
+Python 3.12.3
+
+- streamlit==1.45.1
+- pandas==2.2.3
+- plotly==6.1.2
+- py3Dmol==2.4.2
+- pymatgen==2025.5.28
+- psutil==7.0.0
 
 ## Current functions
 - Permanently set PATH to your POTCAR folder. Upload POSCAR structure and POTCAR will be automatically created, which you can optionally download.
