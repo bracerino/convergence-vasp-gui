@@ -11,6 +11,8 @@ import io
 import zipfile
 import math
 import numpy as np
+from helpers.vasp_file_generator import *
+from helpers.monitor_resource import *
 import re
 
 import py3Dmol
@@ -22,6 +24,11 @@ POTCAR_PATH_FILE = "potcar_path.txt"
 VASP_COMMAND_FILE = "vasp_command.txt"
 
 
+st.set_page_config(page_title="VASP Convergence and Input Files Workflow", layout="wide")
+st.title("VASP Convergence and Input Files  Workflow")
+
+
+display_system_monitoring_detailed()
 
 def parse_oszicar(oszicar_content):
     lines = oszicar_content.strip().split('\n')
@@ -730,8 +737,7 @@ def run_vasp_in_thread(calc_params, work_dir, log_queue, stop_event):
         log_queue.put("THREAD_FINISHED")
 
 
-st.set_page_config(page_title="VASP Convergence Workflow", layout="wide")
-st.title("VASP Convergence Workflow")
+
 
 default_potcar_path = ""
 if os.path.exists(POTCAR_PATH_FILE):
@@ -809,7 +815,9 @@ css = '''
 '''
 
 st.markdown(css, unsafe_allow_html=True)
-tab1, tab2, tab3, tab4 = st.tabs(["➡️ Run Workflow", "🖥️ Live Console", "📊 Live Results","📈 OSZICAR Analysis"])
+tab_main_convergence, tab_input_files, tab_oszicar = st.tabs(["📉✅ Convergence Tests", "📏✨ Geometry Optimization", "📊🔍 OSZICAR Analysis"])
+with tab_main_convergence:
+    tab1, tab2, tab3 = st.tabs(["➡️ Run Workflow", "🖥️ Live Console", "📊 Live Results"])
 
 with tab1:
     st.header("1. Define Working Directory")
@@ -1139,8 +1147,9 @@ with tab3:
             st.dataframe(df_plot)
     else:
         st.info("Results will appear here as calculations complete.")
-
-with tab4:
+with tab_input_files:
+    create_file_generator_tab()
+with tab_oszicar: 
     create_convergence_tab()
 if st.session_state.calculation_running or rerun_needed:
     time.sleep(1)
