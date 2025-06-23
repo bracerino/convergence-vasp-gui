@@ -22,6 +22,432 @@ POTCAR_PATH_FILE = "potcar_path.txt"
 VASP_COMMAND_FILE = "vasp_command.txt"
 
 
+
+def parse_oszicar(oszicar_content):
+    lines = oszicar_content.strip().split('\n')
+
+    optimization_steps = []
+    ionic_steps = []
+    energies = []
+    electronic_steps = []
+    ncg_steps = []
+    de_values = []
+    methods_used = []
+    elec_steps_per_ionic = []
+
+    current_ionic_step = 0
+    current_ionic_elec_count = 0
+
+    for line in lines:
+        line = line.strip()
+
+        ionic_match = re.match(r'^\s*(\d+)\s+F=\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)', line)
+        if ionic_match:
+            if current_ionic_step > 0:
+                elec_steps_per_ionic.append(current_ionic_elec_count)
+
+            current_ionic_step = int(ionic_match.group(1))
+            energy = float(ionic_match.group(2))
+            ionic_steps.append(current_ionic_step)
+            energies.append(energy)
+            current_ionic_elec_count = 0
+            continue
+
+        electronic_match = re.match(
+            r'^\s*(DAV|RMM):\s*(\d+)\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*(\d+)',
+            line
+        )
+        if electronic_match:
+            method = electronic_match.group(1)
+            elec_step = int(electronic_match.group(2))
+            energy = float(electronic_match.group(3))
+            de = float(electronic_match.group(4)) if electronic_match.group(4) else 0
+            d_eps = float(electronic_match.group(5)) if electronic_match.group(5) else 0
+            ncg = int(electronic_match.group(6)) if electronic_match.group(6) else 0
+
+            optimization_steps.append(len(optimization_steps) + 1)
+            electronic_steps.append(f"Ionic {current_ionic_step}, {method} {elec_step}")
+            methods_used.append(method)
+            de_values.append(abs(de))
+            ncg_steps.append(ncg)
+
+            current_ionic_elec_count += 1
+
+    if current_ionic_step > 0:
+        elec_steps_per_ionic.append(current_ionic_elec_count)
+
+    return (optimization_steps, electronic_steps, ionic_steps, energies,
+            ncg_steps, de_values, methods_used, elec_steps_per_ionic)
+
+
+def parse_incar(incar_content):
+    ediff = 1E-4
+
+    lines = incar_content.strip().split('\n')
+    for line in lines:
+        line = line.strip()
+        if line.startswith('#') or not line:
+            continue
+
+        ediff_match = re.search(r'EDIFF\s*=\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)', line, re.IGNORECASE)
+        if ediff_match:
+            ediff = float(ediff_match.group(1))
+
+    return ediff
+
+
+def identify_file_type(filename):
+    filename_lower = filename.lower()
+    if 'incar' in filename_lower:
+        return 'INCAR'
+    elif 'oszicar' in filename_lower:
+        return 'OSZICAR'
+    else:
+        return 'UNKNOWN'
+
+
+def create_convergence_tab():
+    st.header("VASP Optimization Convergence Analysis")
+    st.info("Upload your VASP files (INCAR and/or OSZICAR) to analyze energy convergence during optimization. **Only OSZICAR is required.**")
+
+    st.subheader("Upload OSZICAR/INCAR")
+    uploaded_files = st.file_uploader(
+        "Upload INCAR and/or OSZICAR)",
+        accept_multiple_files=True,
+        key="vasp_files_upload",
+        help="Upload INCAR and/or OSZICAR files. Files are automatically recognized by name."
+    )
+
+    if uploaded_files:
+        incar_content = None
+        oszicar_content = None
+        incar_found = False
+        oszicar_found = False
+
+        for uploaded_file in uploaded_files:
+            file_type = identify_file_type(uploaded_file.name)
+
+            if file_type == 'INCAR':
+                incar_content = uploaded_file.getvalue().decode("utf-8")
+                incar_found = True
+                st.success(f"✅ INCAR file detected: {uploaded_file.name}")
+            elif file_type == 'OSZICAR':
+                oszicar_content = uploaded_file.getvalue().decode("utf-8")
+                oszicar_found = True
+                st.success(f"✅ OSZICAR file detected: {uploaded_file.name}")
+            else:
+                st.warning(f"⚠️ Unknown file type: {uploaded_file.name} (will be ignored)")
+
+        if not oszicar_found:
+            st.error("❌ No OSZICAR file detected. Please upload an OSZICAR file to analyze convergence.")
+            st.info("💡 Make sure your file name contains 'OSZICAR' or 'oszicar'")
+            return
+
+        try:
+            if incar_found and incar_content:
+                ediff = parse_incar(incar_content)
+                ediff_source = "from INCAR file"
+            else:
+                ediff = 1E-4
+                ediff_source = "default value (no INCAR file provided)"
+
+            (optimization_steps, electronic_steps, ionic_steps, energies,
+             ncg_steps, de_values, methods_used, elec_steps_per_ionic) = parse_oszicar(oszicar_content)
+
+            if not ionic_steps or not energies:
+                st.error("❌ No valid energy data found in OSZICAR file. Please check the file format.")
+                return
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.info(f"**Ionic Steps Found:** {len(ionic_steps)}")
+            with col2:
+                st.info(f"**EDIFF:** {ediff:.2E} eV")
+            with col3:
+                st.info(f"**EDIFF Source:** {ediff_source}")
+
+            energy_diffs = []
+            if len(energies) > 1:
+                for i in range(1, len(energies)):
+                    energy_diffs.append(abs(energies[i] - energies[i - 1]))
+                energy_diffs.insert(0, float('inf'))
+            else:
+                energy_diffs = [float('inf')]
+
+            df = pd.DataFrame({
+                'Ionic Step': ionic_steps,
+                'Energy (eV)': energies,
+                'Energy Difference (eV)': energy_diffs,
+                'Electronic Steps': elec_steps_per_ionic
+            })
+
+            st.subheader("Energy Convergence Analysis")
+
+            fig = go.Figure()
+
+            fig.add_trace(go.Scatter(
+                x=ionic_steps,
+                y=energies,
+                name='Total Energy',
+                mode='lines+markers',
+                line=dict(width=3, color='blue'),
+                marker=dict(size=8),
+                yaxis='y1',
+                hovertemplate='Step: %{x}<br>Energy: %{y:.6f} eV<extra></extra>'
+            ))
+
+            if len(energy_diffs) > 1:
+                valid_diffs = [diff for diff in energy_diffs[1:] if diff != float('inf')]
+                if valid_diffs:
+                    fig.add_trace(go.Scatter(
+                        x=ionic_steps[1:],
+                        y=valid_diffs,
+                        name='|ΔE|',
+                        mode='lines+markers',
+                        line=dict(width=2, color='red', dash='dash'),
+                        marker=dict(size=6, symbol='square'),
+                        yaxis='y2',
+                        hovertemplate='Step: %{x}<br>|ΔE|: %{y:.2E} eV<extra></extra>'
+                    ))
+
+            if len(energy_diffs) > 1:
+                fig.add_hline(
+                    y=ediff,
+                    line_dash="dot",
+                    line_color="green",
+                    annotation_text=f"EDIFF = {ediff:.2E} eV",
+                    annotation_position="top right",
+                    annotation_font_size=18,
+                    yref="y2"
+                )
+
+            fig.update_layout(
+                title=dict(
+                    text="VASP Optimization Convergence",
+                    font=dict(size=24, color='black')
+                ),
+                xaxis=dict(
+                    title='Ionic Step',
+                    title_font=dict(size=20, color='black'),
+                    tickfont=dict(size=20, color='black'),
+                    gridcolor='lightgray'
+                ),
+                yaxis=dict(
+                    title='Total Energy (eV)',
+                    side='left',
+                    title_font=dict(size=20, color='blue'),
+                    tickfont=dict(size=20, color='blue')
+                ),
+                yaxis2=dict(
+                    title='|Energy Difference| (eV)',
+                    side='right',
+                    overlaying='y',
+                    title_font=dict(size=20, color='red'),
+                    tickfont=dict(size=20, color='red'),
+                    tickformat='.1E'
+                ),
+                legend=dict(
+                    x=0.5,
+                    y=-0.2,
+                    xanchor='center',
+                    orientation='h',
+                    bgcolor='rgba(255,255,255,0.8)',
+                    borderwidth=1,
+                    font=dict(size=18)
+                ),
+                height=600,
+                plot_bgcolor='white',
+                font=dict(size=20, color='black')
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.subheader("Electronic Convergence Efficiency")
+
+            col_eff1, col_eff2 = st.columns(2)
+
+            with col_eff1:
+                if elec_steps_per_ionic:
+                    fig_elec = go.Figure()
+
+                    fig_elec.add_trace(go.Bar(
+                        x=ionic_steps,
+                        y=elec_steps_per_ionic,
+                        name='Electronic Steps',
+                        marker_color='purple',
+                        hovertemplate='Ionic Step: %{x}<br>Electronic Steps: %{y}<extra></extra>'
+                    ))
+
+                    fig_elec.update_layout(
+                        title=dict(
+                            text="Electronic Steps per Ionic Step",
+                            font=dict(size=18, color='black')
+                        ),
+                        xaxis=dict(
+                            title='Ionic Step',
+                            title_font=dict(size=14, color='black'),
+                            tickfont=dict(size=12, color='black')
+                        ),
+                        yaxis=dict(
+                            title='Electronic Steps',
+                            title_font=dict(size=14, color='purple'),
+                            tickfont=dict(size=12, color='purple')
+                        ),
+                        height=400,
+                        plot_bgcolor='white'
+                    )
+
+                    st.plotly_chart(fig_elec, use_container_width=True)
+
+            with col_eff2:
+                if methods_used:
+                    method_counts = pd.Series(methods_used).value_counts()
+
+                    fig_methods = go.Figure(data=[go.Pie(
+                        labels=method_counts.index,
+                        values=method_counts.values,
+                        hole=0.3,
+                        hovertemplate='Method: %{label}<br>Count: %{value}<br>Percentage: %{percent}<extra></extra>'
+                    )])
+
+                    fig_methods.update_layout(
+                        title=dict(
+                            text="Electronic Method Usage",
+                            font=dict(size=18, color='black')
+                        ),
+                        height=400,
+                        font=dict(size=12)
+                    )
+
+                    st.plotly_chart(fig_methods, use_container_width=True)
+
+            st.subheader("Convergence Analysis Summary")
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                st.metric(
+                    label="Total Ionic Steps",
+                    value=len(ionic_steps)
+                )
+
+            with col2:
+                final_energy = energies[-1] if energies else 0
+                st.metric(
+                    label="Final Energy (eV)",
+                    value=f"{final_energy:.6f}"
+                )
+
+            with col3:
+                if len(energy_diffs) > 1:
+                    final_diff = energy_diffs[-1] if energy_diffs[-1] != float('inf') else 0
+                    st.metric(
+                        label="Final |ΔE| (eV)",
+                        value=f"{final_diff:.2E}" if final_diff != float('inf') else "N/A"
+                    )
+                else:
+                    st.metric(
+                        label="Final |ΔE| (eV)",
+                        value="N/A"
+                    )
+
+            with col4:
+                if len(energy_diffs) > 1:
+                    final_diff = energy_diffs[-1] if energy_diffs[-1] != float('inf') else 0
+                    energy_converged = final_diff < ediff if final_diff != float('inf') else False
+                    st.metric(
+                        label="Energy Converged",
+                        value="Yes" if energy_converged else "No"
+                    )
+                else:
+                    st.metric(
+                        label="Energy Converged",
+                        value="Unknown"
+                    )
+
+            if len(energy_diffs) > 1:
+                valid_diffs = [diff for diff in energy_diffs[1:] if diff != float('inf')]
+                if valid_diffs:
+                    converged_steps = [i + 2 for i, diff in enumerate(valid_diffs) if diff < ediff]
+                    if converged_steps:
+                        st.success(f"🎯 Energy convergence first achieved at ionic step: **{converged_steps[0]}**")
+                    else:
+                        st.warning(f"⚠️ Energy difference has not reached EDIFF threshold of {ediff:.2E} eV")
+
+            if elec_steps_per_ionic:
+                avg_elec_steps = np.mean(elec_steps_per_ionic)
+                max_elec_steps = max(elec_steps_per_ionic)
+                min_elec_steps = min(elec_steps_per_ionic)
+
+                st.info(f"📊 **Electronic Convergence Efficiency:** Avg: {avg_elec_steps:.1f} steps/ionic, "
+                        f"Range: {min_elec_steps}-{max_elec_steps} steps")
+
+            if methods_used:
+                method_counts = pd.Series(methods_used).value_counts()
+                method_summary = ", ".join([f"{method}: {count}" for method, count in method_counts.items()])
+                st.info(f"🔧 **Methods Used:** {method_summary} electronic steps")
+
+            st.subheader("Detailed Data")
+
+            df_display = df.copy()
+            df_display['Energy (eV)'] = df_display['Energy (eV)'].apply(lambda x: f"{x:.6f}")
+            df_display['Energy Difference (eV)'] = df_display['Energy Difference (eV)'].apply(
+                lambda x: f"{x:.2E}" if x != float('inf') else "N/A"
+            )
+
+            st.dataframe(df_display, use_container_width=True)
+
+            csv_data = df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Convergence Data (CSV)",
+                data=csv_data,
+                file_name="vasp_convergence_data.csv",
+                mime="text/csv"
+            )
+
+        except Exception as e:
+            st.error(f"❌ Error processing files: {str(e)}")
+            st.error("Please ensure your files are in the correct VASP format.")
+
+    else:
+        st.info("📁 Please upload your VASP files to begin analysis.")
+
+        with st.expander("📋 Expected File Formats and Naming"):
+            st.markdown("""
+            **File Naming Convention:**
+            - Files containing 'INCAR' or 'incar' in the name will be recognized as INCAR files
+            - Files containing 'OSZICAR' or 'oszicar' in the name will be recognized as OSZICAR files
+
+            **Examples of valid file names:**
+            - `INCAR`, `incar`, `INCAR.txt`, `my_incar_file.txt`
+            - `OSZICAR`, `oszicar`, `OSZICAR.txt`, `calculation_oszicar.txt`
+
+            **INCAR file should contain (optional):**
+            ```
+            SYSTEM = Your System Name
+            PREC   = Accurate
+            ENCUT  = 520
+            EDIFF  = 1E-5
+            IBRION = 2
+            ...
+            ```
+
+            **OSZICAR file should contain optimization steps like (required):**
+            ```
+            DAV:   1     0.107357121467E+05    0.10736E+05   -0.33896E+05  5440   0.240E+03
+            DAV:   2     0.182815773570E+04   -0.89076E+04   -0.85277E+04  5440   0.677E+02
+            ...
+               1 F= -.53549513E+03 E0= -.53549513E+03  d E =-.535495E+03
+            DAV:   1    -0.210829461167E+04   -0.15728E+04   -0.61866E+04  5740   0.686E+02
+            ...
+               2 F= 0.14480323E+04 E0= 0.14480554E+04  d E =0.198353E+04
+            ```
+
+            **Note:** Only OSZICAR file is required for analysis. INCAR is optional and used to read custom EDIFF values.
+            """)
+
+
+
 def create_potcar(structure, vasp_potentials_folder):
     if not vasp_potentials_folder or not os.path.isdir(vasp_potentials_folder):
         st.error("VASP potentials directory is not set or does not exist.")
@@ -368,7 +794,22 @@ with st.sidebar:
     uploaded_poscar_sidebar = st.file_uploader("Upload", type=['POSCAR', 'vasp', 'contcar'],
                                                label_visibility="collapsed")
 
-tab1, tab2, tab3 = st.tabs(["➡️ Run Workflow", "🖥️ Live Console", "📊 Live Results"])
+css = '''
+<style>
+    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
+        font-size: 1.1rem !important;
+        color: #1e3a8a !important;
+        font-weight: bold !important;
+    }
+
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 25px !important;
+    }
+</style>
+'''
+
+st.markdown(css, unsafe_allow_html=True)
+tab1, tab2, tab3, tab4 = st.tabs(["➡️ Run Workflow", "🖥️ Live Console", "📊 Live Results","📈 OSZICAR Analysis"])
 
 with tab1:
     st.header("1. Define Working Directory")
@@ -699,6 +1140,8 @@ with tab3:
     else:
         st.info("Results will appear here as calculations complete.")
 
+with tab4:
+    create_convergence_tab()
 if st.session_state.calculation_running or rerun_needed:
     time.sleep(1)
     st.rerun()
