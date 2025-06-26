@@ -4,7 +4,7 @@ Video tutorial here: **[YouTube](https://youtu.be/lCK-NT9ejHQ)**. GUI is based o
 Additional functions:  
 - Read OSZICAR to analyse the energy convergence during geometry optimization run  
 - Create automatically all input files (INCAR, KPOINTS, POTCAR, POSCAR) from uploaded structure in a set directory
-- Create automatically all input files (INCAR, KPOINTS, POTCAR) in all subdirectories containing structure POSCAR file for a set main directory
+- Create automatically all input files (INCAR, KPOINTS, POTCAR) in all subdirectories, each containing structure POSCAR file for a set main directory
 - Create bash script that will first perform geometry optimization with IBRION=2 for a set number of ionic steps, and then it will switch to IBRION=1 to find minimum better
 
 
