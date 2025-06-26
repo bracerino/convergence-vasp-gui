@@ -1,6 +1,11 @@
 # convergence-tests-vasp-gui
 GUI for automatic creation of POTCAR for POSCAR and calculations energy cut-off (Ecut) and k-space sampling convergence in VASP.
 Video tutorial here: **[YouTube](https://youtu.be/lCK-NT9ejHQ)**. GUI is based on collection of my previous VASP scripts: https://github.com/bracerino/VASP_scripts.
+Additional functions:  
+- Read OSZICAR to analyse the energy convergence during geometry optimization run  
+- Create automatically all input files (INCAR, KPOINTS, POTCAR, POSCAR) from uploaded structure in a set directory
+- Create automatically all input files (INCAR, KPOINTS, POTCAR) in all subdirectories containing structure POSCAR file for a set main directory
+- Create bash script that will first perform geometry optimization with IBRION=2 for a set number of ionic steps, and then it will switch to IBRION=1 to find minimum better
 
 
 ![GUI for VASP convergence tests and automatic creation of POTCAR](vasp_convergence_gui/1.png)
