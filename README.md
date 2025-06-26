@@ -34,4 +34,14 @@ Python 3.12.3
 
 - Set parameters for energy cut-off (Ecut) and k-space sampling and run the convergence test. You can see in realtime the updated convergence plot after each step is finished. In the sidebar, do not forget to set the vasp command that will be run 'e.g. mpirun -np 4 vasp_std'.
 ![GUI for VASP convergence tests and automatic creation of POTCAR](vasp_convergence_gui/2_1.png)
-![GUI for VASP convergence tests and automatic creation of POTCAR](vasp_convergence_gui/3.png)
+---
+![GUI for VASP convergence tests and automatic creation of POTCAR](vasp_convergence_gui/3.png)  
+
+---
+![Analyze convergence during geometry optimization](vasp_convergence_gui/1-1.png)   
+
+---
+![Create all input files in all subdirectories](vasp_convergence_gui/1-2.png)
+
+---
+![Analyze OSZICAR](vasp_convergence_gui/1-3.png)
