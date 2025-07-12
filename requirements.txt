@@ -1,4 +1,4 @@
-streamlit
+streamlit==1.45.1
 pandas
 plotly
 py3Dmol
